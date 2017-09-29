@@ -10,6 +10,7 @@
 library("tidyverse")
 library("stringr")
 library("rgdal")
+library("sp")
 
 #read raw data of parking and moving violations
 ##parking violations from https://data.cityofnewyork.us/dataset/c284-tqph
@@ -92,3 +93,33 @@ tickets <- tickets %>%
   filter(!grepl("[^0-9]", command)) %>%
   mutate(command = parse_number(command)) %>%
   filter(command %in% unique(precinct@data$Precinct))
+
+#read collisions
+# data from
+# https://data.cityofnewyork.us/Public-Safety/NYPD-Motor-Vehicle-Collisions/h9gi-nx95
+crashes <- read_csv("NYPD_Motor_Vehicle_Collisions.csv",
+                    col_types = cols(DATE = col_date(format = "%m/%d/%Y"))) %>%
+          filter(!is.na(LONGITUDE),
+                 format(DATE, "%Y") %in% 2014:2015)
+
+NAD83 <- "+proj=lcc +lat_1=40.66666666666666 +lat_2=41.03333333333333 +lat_0=40.16666666666666 
++lon_0=-74 +x_0=300000 +y_0=0 +datum=NAD83 +units=us-ft +no_defs +ellps=GRS80
++towgs84=0,0,0"
+WGS84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+crashes <- crashes %>%
+  mutate(Precinct = crashes %>%
+           select(LONGITUDE, LATITUDE) %>%
+           cbind() %>%
+           SpatialPoints(., CRS(WGS84)) %>%
+           spTransform(CRS(NAD83)) %>%
+           over(precinct) %>%
+           select(Precinct) %>%
+           pull())
+
+crashes <- crashes %>%
+  group_by(Precinct, DATE) %>%
+  count() %>%
+  right_join(crashes %>% expand(DATE, Precinct), 
+             by = c("Precinct", "DATE")) %>%
+  mutate(n = ifelse(is.na(n), 0, n))
